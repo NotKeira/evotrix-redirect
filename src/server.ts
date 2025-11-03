@@ -710,6 +710,8 @@ const server = http.createServer(handleRequest);
 
 server.listen(PORT, () => {
   console.log(`🚀 Evotrix Redirect server running at http://localhost:${PORT}`);
-  console.log(`API Key: ${API_KEY}`);
   console.log('Set API_KEY environment variable to change the default API key');
+  if (API_KEY === 'your-secure-api-key-here') {
+    console.log('⚠️  WARNING: Using default API key! Set API_KEY environment variable for production.');
+  }
 });
