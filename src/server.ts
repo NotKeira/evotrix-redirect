@@ -27,6 +27,7 @@ const iconCache = new LRUCache<string, IconCache>({
 
 // In-memory storage for redirects
 const redirects = new Map<string, Redirect>();
+const shortCodeIndex = new Map<string, string>(); // shortCode -> id mapping
 
 // Helper function to generate unique ID
 function generateId(): string {
@@ -77,7 +78,7 @@ function parseJsonBody(req: http.IncomingMessage): Promise<any> {
 
 // Check API key
 function checkApiKey(req: http.IncomingMessage): boolean {
-  const apiKey = req.headers['x-api-key'];
+  const apiKey = req.headers['x-api-key'] || req.headers['X-API-Key'];
   return apiKey === API_KEY;
 }
 
@@ -365,7 +366,7 @@ function getHtmlPage(): string {
                     
                     const icon = document.createElement('img');
                     icon.className = 'redirect-icon';
-                    icon.src = redirect.favicon || '/favicon.ico';
+                    icon.src = redirect.favicon || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23667eea"><path d="M13.5 2c-5.629 0-10.212 4.436-10.475 10h-3.025l4.537 5.917 4.463-5.917h-2.975c.26-3.902 3.508-7 7.475-7 4.136 0 7.5 3.364 7.5 7.5s-3.364 7.5-7.5 7.5c-2.381 0-4.502-1.119-5.876-2.854l-1.847 2.449c1.919 2.088 4.664 3.405 7.723 3.405 5.798 0 10.5-4.702 10.5-10.5s-4.702-10.5-10.5-10.5z"/></svg>';
                     icon.onerror = () => {
                         icon.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23667eea"><path d="M13.5 2c-5.629 0-10.212 4.436-10.475 10h-3.025l4.537 5.917 4.463-5.917h-2.975c.26-3.902 3.508-7 7.475-7 4.136 0 7.5 3.364 7.5 7.5s-3.364 7.5-7.5 7.5c-2.381 0-4.502-1.119-5.876-2.854l-1.847 2.449c1.919 2.088 4.664 3.405 7.723 3.405 5.798 0 10.5-4.702 10.5-10.5s-4.702-10.5-10.5-10.5z"/></svg>';
                     };
@@ -576,13 +577,11 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         return;
       }
 
-      // Check if short code already exists
-      for (const redirect of redirects.values()) {
-        if (redirect.shortCode === shortCode) {
-          res.writeHead(409, { 'Content-Type': 'text/plain' });
-          res.end('Short code already exists');
-          return;
-        }
+      // Check if short code already exists (O(1) lookup)
+      if (shortCodeIndex.has(shortCode)) {
+        res.writeHead(409, { 'Content-Type': 'text/plain' });
+        res.end('Short code already exists');
+        return;
       }
 
       const id = generateId();
@@ -595,6 +594,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       };
 
       redirects.set(id, redirect);
+      shortCodeIndex.set(shortCode, id);
       
       // Fetch icon asynchronously
       fetchIcon(targetUrl).catch(err => console.error('Error fetching icon:', err));
@@ -627,7 +627,20 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
     try {
       const body = await parseJsonBody(req);
-      const { targetUrl, title } = body;
+      const { targetUrl, title, shortCode } = body;
+
+      // If shortCode is being changed, check if the new one is available
+      if (shortCode && shortCode !== redirect.shortCode) {
+        if (shortCodeIndex.has(shortCode)) {
+          res.writeHead(409, { 'Content-Type': 'text/plain' });
+          res.end('Short code already exists');
+          return;
+        }
+        // Update the index
+        shortCodeIndex.delete(redirect.shortCode);
+        shortCodeIndex.set(shortCode, id);
+        redirect.shortCode = shortCode;
+      }
 
       if (targetUrl) {
         redirect.targetUrl = targetUrl;
@@ -657,6 +670,11 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
     const id = pathname.split('/')[3];
     
+    const redirect = redirects.get(id);
+    if (redirect) {
+      shortCodeIndex.delete(redirect.shortCode);
+    }
+    
     if (redirects.delete(id)) {
       res.writeHead(204);
       res.end();
@@ -671,8 +689,10 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   if (pathname && pathname.length > 1 && method === 'GET') {
     const shortCode = pathname.substring(1);
     
-    for (const redirect of redirects.values()) {
-      if (redirect.shortCode === shortCode) {
+    const redirectId = shortCodeIndex.get(shortCode);
+    if (redirectId) {
+      const redirect = redirects.get(redirectId);
+      if (redirect) {
         res.writeHead(302, { 'Location': redirect.targetUrl });
         res.end();
         return;
