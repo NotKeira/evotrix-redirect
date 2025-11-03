@@ -1,0 +1,21 @@
+{
+  "name": "evotrix-redirect",
+  "version": "1.0.0",
+  "description": "Modern redirect manager with API and caching",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsc && node dist/server.js"
+  },
+  "keywords": ["redirect", "cache", "api"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@notkeira/ttl-cache": "^0.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
