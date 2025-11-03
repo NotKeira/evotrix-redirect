@@ -1,5 +1,6 @@
 import * as http from 'http';
 import * as url from 'url';
+import * as crypto from 'crypto';
 import { LRUCache } from '@notkeira/ttl-cache';
 
 interface Redirect {
@@ -18,6 +19,9 @@ interface IconCache {
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.API_KEY || 'your-secure-api-key-here';
 const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000; // 2 weeks in milliseconds
+
+// Default fallback icon SVG
+const FALLBACK_ICON = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23667eea"><path d="M13.5 2c-5.629 0-10.212 4.436-10.475 10h-3.025l4.537 5.917 4.463-5.917h-2.975c.26-3.902 3.508-7 7.475-7 4.136 0 7.5 3.364 7.5 7.5s-3.364 7.5-7.5 7.5c-2.381 0-4.502-1.119-5.876-2.854l-1.847 2.449c1.919 2.088 4.664 3.405 7.723 3.405 5.798 0 10.5-4.702 10.5-10.5s-4.702-10.5-10.5-10.5z"/></svg>';
 
 // TTL Cache for icons (2 weeks)
 const iconCache = new LRUCache<string, IconCache>({
@@ -55,7 +59,7 @@ async function fetchIcon(targetUrl: string): Promise<IconCache> {
     
     iconCache.set(targetUrl, icons);
   } catch (error) {
-    console.error('Error fetching icon:', error);
+    // Silently fail - will use default icon
   }
   
   return icons;
@@ -76,10 +80,27 @@ function parseJsonBody(req: http.IncomingMessage): Promise<any> {
   });
 }
 
-// Check API key
+// Check API key using constant-time comparison to prevent timing attacks
 function checkApiKey(req: http.IncomingMessage): boolean {
   const apiKey = req.headers['x-api-key'] || req.headers['X-API-Key'];
-  return apiKey === API_KEY;
+  if (typeof apiKey !== 'string') {
+    return false;
+  }
+  
+  // Use crypto.timingSafeEqual for constant-time comparison
+  try {
+    const providedKey = Buffer.from(apiKey);
+    const expectedKey = Buffer.from(API_KEY);
+    
+    // Keys must be same length for timingSafeEqual
+    if (providedKey.length !== expectedKey.length) {
+      return false;
+    }
+    
+    return crypto.timingSafeEqual(providedKey, expectedKey);
+  } catch {
+    return false;
+  }
 }
 
 // HTML page
@@ -366,9 +387,9 @@ function getHtmlPage(): string {
                     
                     const icon = document.createElement('img');
                     icon.className = 'redirect-icon';
-                    icon.src = redirect.favicon || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23667eea"><path d="M13.5 2c-5.629 0-10.212 4.436-10.475 10h-3.025l4.537 5.917 4.463-5.917h-2.975c.26-3.902 3.508-7 7.475-7 4.136 0 7.5 3.364 7.5 7.5s-3.364 7.5-7.5 7.5c-2.381 0-4.502-1.119-5.876-2.854l-1.847 2.449c1.919 2.088 4.664 3.405 7.723 3.405 5.798 0 10.5-4.702 10.5-10.5s-4.702-10.5-10.5-10.5z"/></svg>';
+                    icon.src = redirect.favicon || '` + FALLBACK_ICON + `';
                     icon.onerror = () => {
-                        icon.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23667eea"><path d="M13.5 2c-5.629 0-10.212 4.436-10.475 10h-3.025l4.537 5.917 4.463-5.917h-2.975c.26-3.902 3.508-7 7.475-7 4.136 0 7.5 3.364 7.5 7.5s-3.364 7.5-7.5 7.5c-2.381 0-4.502-1.119-5.876-2.854l-1.847 2.449c1.919 2.088 4.664 3.405 7.723 3.405 5.798 0 10.5-4.702 10.5-10.5s-4.702-10.5-10.5-10.5z"/></svg>';
+                        icon.src = '` + FALLBACK_ICON + `';
                     };
                     
                     const title = document.createElement('div');
@@ -597,7 +618,9 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       shortCodeIndex.set(shortCode, id);
       
       // Fetch icon asynchronously
-      fetchIcon(targetUrl).catch(err => console.error('Error fetching icon:', err));
+      fetchIcon(targetUrl).catch(() => {
+        // Icon fetch failed, cache entry will use default
+      });
 
       res.writeHead(201, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(redirect));
@@ -645,7 +668,9 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       if (targetUrl) {
         redirect.targetUrl = targetUrl;
         // Refresh icon cache
-        fetchIcon(targetUrl).catch(err => console.error('Error fetching icon:', err));
+        fetchIcon(targetUrl).catch(() => {
+          // Icon fetch failed, cache entry will use default
+        });
       }
       if (title) redirect.title = title;
 
